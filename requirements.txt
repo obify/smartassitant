@@ -6,5 +6,12 @@ python-dotenv
 bs4
 langchain-groq
 faiss-cpu
+streamlit
 pymupdf
 pypdfium2
+unstructured
+unstructured[image]
+openpyxl
+python-magic
+Pillow
+pytesseract
