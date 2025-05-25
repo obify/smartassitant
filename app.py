@@ -61,9 +61,9 @@ if not groq_api_key:
 st.subheader("Upload Knowledge Document(s)")
 uploaded_files = st.file_uploader(
     "Choose one or more documents (PDF, Excel, CSV, Image)",
-    type=["pdf", "xlsx", "xls", "csv", "png", "jpg", "jpeg"], # Allowed file types
+    type=["pdf", "xlsx", "xls", "csv"], # Allowed file types
     accept_multiple_files=True,
-    help="Supported formats: PDF, Excel (.xlsx, .xls), CSV, and Image files (.png, .jpg, .jpeg). For images, Tesseract OCR must be installed on the system."
+    help="Supported formats: PDF, Excel (.xlsx, .xls), CSV."
 )
 
 # --- Process Documents and Setup RAG ---
