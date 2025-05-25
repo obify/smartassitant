@@ -1,0 +1,10 @@
+langchain
+langchain_community
+langchain_huggingface
+langchain-google-genai
+python-dotenv
+bs4
+langchain-groq
+faiss-cpu
+pymupdf
+pypdfium2
