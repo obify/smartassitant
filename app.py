@@ -1,13 +1,11 @@
 import streamlit as st
 import os
 from dotenv import load_dotenv
+import tempfile # For creating temporary files reliably
+import pandas as pd # For basic CSV/Excel preview if needed (though not directly used for loading into LangChain)
 
 # --- Configuration ---
-# Load environment variables from .env file (for local development)
-# In production, ensure GROQ_API_KEY is set in your environment
 load_dotenv()
-
-# Get Groq API key from environment variable
 groq_api_key = os.getenv("GROQ_API_KEY")
 
 # Hardcoded System Prompt
@@ -30,7 +28,9 @@ CHUNK_OVERLAP = 100
 GROQ_MODEL_NAME = "llama3-8b-8192"
 
 # --- Import necessary Langchain and other modules ---
-from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_community.document_loaders import PyMuPDFLoader, CSVLoader
+# For Excel and Images (and other unstructured data), we use UnstructuredFileLoader
+from langchain_community.document_loaders import UnstructuredFileLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -40,14 +40,14 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 
 # --- Streamlit App ---
-st.set_page_config(page_title="PDF RAG System", layout="wide")
+st.set_page_config(page_title="Multi-Document Q&A AI Agent", layout="wide")
 
-st.title("📄 PDF RAG System with Groq & Streamlit")
+st.title("📚 Multi-Document Q&A AI Agent")
 
 st.write(
     """
-    This application allows you to chat with your PDF documents using a Retrieval-Augmented Generation (RAG) system.
-    Upload one or more PDF files and start asking questions!
+    This application allows you to chat with your documents.
+    Upload PDF, Excel (.xlsx), CSV files as your knowledge base.
     """
 )
 
@@ -57,60 +57,76 @@ if not groq_api_key:
     st.info("Please set the `GROQ_API_KEY` environment variable on your system or in a `.env` file.")
     st.stop() # Stop the app if API key is missing
 
-# --- PDF Upload ---
-st.subheader("Upload PDF Document(s)")
+# --- File Upload ---
+st.subheader("Upload Knowledge Document(s)")
 uploaded_files = st.file_uploader(
-    "Choose one or more PDF files",
-    type="pdf",
+    "Choose one or more documents (PDF, Excel, CSV, Image)",
+    type=["pdf", "xlsx", "xls", "csv", "png", "jpg", "jpeg"], # Allowed file types
     accept_multiple_files=True,
-    help="Select the PDF documents you want to use as knowledge base."
+    help="Supported formats: PDF, Excel (.xlsx, .xls), CSV, and Image files (.png, .jpg, .jpeg). For images, Tesseract OCR must be installed on the system."
 )
 
 # --- Process Documents and Setup RAG ---
-# st.cache_resource show_spinner handles the progress message
-@st.cache_resource(show_spinner="Setting up RAG system with your documents...")
+@st.cache_resource(show_spinner="Setting up Agent with your documents...")
 def setup_rag_system(files, groq_key, system_prompt_tpl):
     if not files:
-        return None, "Please upload PDF files to proceed."
+        return None, "Please upload documents to proceed."
 
-    # --- Embedding Model ---
     embeddings = HuggingFaceEmbeddings(
         model_name=EMBEDDING_MODEL_NAME,
         model_kwargs={'device': 'cpu'}
     )
 
     all_docs = []
-    temp_dir = "temp_pdf_uploads"
-    os.makedirs(temp_dir, exist_ok=True) # Ensure temp directory exists
-
-    for uploaded_file in files:
-        temp_filepath = os.path.join(temp_dir, uploaded_file.name)
-        
-        with open(temp_filepath, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        
-        try:
-            loader = PyMuPDFLoader(temp_filepath)
-            docs = loader.load()
-            if not docs:
-                # Still show a warning if a specific PDF is empty
-                st.warning(f"Warning: PDF document '**{uploaded_file.name}**' loaded but contains no pages/content. Skipping.")
-                continue
-            all_docs.extend(docs)
-        except Exception as e:
-            st.error(f"Error loading PDF '**{uploaded_file.name}**': {e}")
-            return None, f"Error loading PDF '**{uploaded_file.name}**': {e}"
-        finally:
-            # Clean up temporary file
-            if os.path.exists(temp_filepath):
-                os.remove(temp_filepath)
     
-    # Clean up the temporary directory if it's empty
-    if not os.listdir(temp_dir):
-        os.rmdir(temp_dir)
+    # Use tempfile.TemporaryDirectory to manage temporary files securely
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for uploaded_file in files:
+            file_extension = os.path.splitext(uploaded_file.name)[1].lower()
+            temp_filepath = os.path.join(temp_dir, uploaded_file.name)
+            
+            # Write uploaded file to a temporary location
+            with open(temp_filepath, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            
+            st.markdown(f"**Loading**: {uploaded_file.name}...") # Informative message during processing
+            try:
+                docs_from_file = []
+                if file_extension == ".pdf":
+                    loader = PyMuPDFLoader(temp_filepath)
+                    docs_from_file = loader.load()
+                elif file_extension == ".csv":
+                    loader = CSVLoader(temp_filepath)
+                    docs_from_file = loader.load()
+                elif file_extension in [".xlsx", ".xls"]:
+                    # UnstructuredFileLoader can handle Excel files.
+                    # It requires 'openpyxl' and other unstructured dependencies.
+                    loader = UnstructuredFileLoader(temp_filepath)
+                    docs_from_file = loader.load()
+                elif file_extension in [".png", ".jpg", ".jpeg"]:
+                    # UnstructuredFileLoader can perform OCR on images.
+                    # This requires Tesseract OCR engine installed on the system.
+                    loader = UnstructuredFileLoader(temp_filepath, mode="elements") # mode="elements" helps with richer parsing
+                    docs_from_file = loader.load()
+                    if not docs_from_file:
+                        st.warning(f"No text extracted from image: **{uploaded_file.name}**. Ensure Tesseract OCR is installed and the image contains readable text.")
+                else:
+                    st.warning(f"Unsupported file type for **{uploaded_file.name}**: {file_extension}. Skipping.")
+                    continue # Skip to next file
+
+                if not docs_from_file:
+                    st.warning(f"Warning: Document '**{uploaded_file.name}**' loaded but contains no content. Skipping.")
+                    continue
+                all_docs.extend(docs_from_file)
+                st.markdown(f"**Loaded**: {uploaded_file.name} (extracted {len(docs_from_file)} parts)")
+
+            except Exception as e:
+                st.error(f"Error processing **{uploaded_file.name}**: {e}")
+                # Don't return None here, try to process other files
+                continue # Skip to next file
 
     if not all_docs:
-        return None, "No valid documents were loaded from the uploaded PDFs."
+        return None, "No valid content could be extracted from the uploaded documents. Please check file formats and content."
 
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
@@ -165,7 +181,7 @@ if rag_chain:
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
-            st.markdown(message["content"]) # THIS LINE IS CORRECTED
+            st.markdown(message["content"])
 
     if prompt := st.chat_input("Your question:"):
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -186,7 +202,7 @@ if rag_chain:
             message_placeholder.markdown(full_response)
         st.session_state.messages.append({"role": "assistant", "content": full_response})
 elif not uploaded_files:
-    st.info("Please upload one or more PDF documents to start chatting.")
+    st.info("Please upload one or more documents (PDF, Excel, CSV, Image) to start chatting.")
 
 st.sidebar.markdown("---")
 st.sidebar.info("The FAISS index is in-memory and will be cleared when you close or refresh the tab.")
