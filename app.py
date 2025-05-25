@@ -11,8 +11,8 @@ load_dotenv()
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 
 # Text Splitting parameters
-CHUNK_SIZE = 800
-CHUNK_OVERLAP = 100
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 200
 
 # --- Import necessary Langchain and other modules ---
 from langchain_community.document_loaders import PyMuPDFLoader
